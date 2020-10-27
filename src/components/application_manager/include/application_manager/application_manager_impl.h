@@ -132,7 +132,7 @@ struct AppIconInfo {
       : endpoint(ws_endpoint), pending_request(pending) {}
 };
 
-CREATE_LOGGERPTR_GLOBAL(logger_, "ApplicationManager")
+SDL_CREATE_LOG_VARIABLE("ApplicationManager")
 typedef std::shared_ptr<timer::Timer> TimerSPtr;
 
 class ApplicationManagerImpl
@@ -271,17 +271,40 @@ class ApplicationManagerImpl
 
   /**
    * @brief Checks if Application is subscribed for way points
-   * @param Application pointer
+   * @param Application id
    * @return true if Application is subscribed for way points
    * otherwise false
    */
-  bool IsAppSubscribedForWayPoints(ApplicationSharedPtr app) const OVERRIDE;
+  bool IsAppSubscribedForWayPoints(uint32_t app_id) const OVERRIDE;
+
+  /**
+   * @brief Checks if Application is subscribed for way points
+   * @param Application reference
+   * @return true if Application is subscribed for way points
+   * otherwise false
+   */
+  bool IsAppSubscribedForWayPoints(Application& app) const OVERRIDE;
+
+  void SaveWayPointsMessage(
+      smart_objects::SmartObjectSPtr way_points_message) OVERRIDE;
+
+  /**
+   * @brief Subscribe Application for way points
+   * @param Application id
+   */
+  void SubscribeAppForWayPoints(uint32_t app_id) OVERRIDE;
 
   /**
    * @brief Subscribe Application for way points
    * @param Application pointer
    */
   void SubscribeAppForWayPoints(ApplicationSharedPtr app) OVERRIDE;
+
+  /**
+   * @brief Unsubscribe Application for way points
+   * @param Application id
+   */
+  void UnsubscribeAppFromWayPoints(uint32_t app_id) OVERRIDE;
 
   /**
    * @brief Unsubscribe Application for way points
@@ -400,7 +423,10 @@ class ApplicationManagerImpl
   mobile_api::HMILevel::eType IsHmiLevelFullAllowed(ApplicationSharedPtr app);
 
   void ConnectToDevice(const std::string& device_mac) OVERRIDE;
-  void OnHMIStartedCooperation() OVERRIDE;
+
+  void OnHMIReady() OVERRIDE;
+
+  void RequestForInterfacesAvailability() OVERRIDE;
 
   void DisconnectCloudApp(ApplicationSharedPtr app) OVERRIDE;
 
@@ -834,11 +860,11 @@ class ApplicationManagerImpl
    */
   void EndNaviServices(uint32_t app_id) OVERRIDE;
 
-  /**
-   * @brief ForbidStreaming forbid the stream over the certain application.
-   * @param app_id the application's id which should stop streaming.
-   */
+  DEPRECATED
   void ForbidStreaming(uint32_t app_id) OVERRIDE;
+
+  void ForbidStreaming(uint32_t app_id,
+                       protocol_handler::ServiceType service_type) OVERRIDE;
 
   /**
    * @brief Called when application completes streaming configuration
@@ -934,6 +960,7 @@ class ApplicationManagerImpl
    */
   bool IsHMICooperating() const OVERRIDE;
 
+  void SetHMICooperating(const bool hmi_cooperating) OVERRIDE;
   /**
    * @brief Method used to send default app tts globalProperties
    * in case they were not provided from mobile side after defined time
@@ -955,6 +982,13 @@ class ApplicationManagerImpl
    * send TTS global properties after timeout
    */
   void RemoveAppFromTTSGlobalPropertiesList(const uint32_t app_id) OVERRIDE;
+
+  ResetGlobalPropertiesResult ResetGlobalProperties(
+      const smart_objects::SmartObject& global_properties_ids,
+      const uint32_t app_id) OVERRIDE;
+
+  ResetGlobalPropertiesResult ResetAllApplicationGlobalProperties(
+      const uint32_t app_id) OVERRIDE;
 
   // TODO(AOleynik): Temporary added, to fix build. Should be reworked.
   connection_handler::ConnectionHandler& connection_handler() const OVERRIDE;
@@ -1229,14 +1263,12 @@ class ApplicationManagerImpl
   void PrepareApplicationListSO(ApplicationList app_list,
                                 smart_objects::SmartObject& applications,
                                 ApplicationManager& app_mngr) {
-    CREATE_LOGGERPTR_LOCAL(logger_, "ApplicationManager");
-
     smart_objects::SmartArray* app_array = applications.asArray();
     uint32_t app_count = NULL == app_array ? 0 : app_array->size();
     typename ApplicationList::const_iterator it;
     for (it = app_list.begin(); it != app_list.end(); ++it) {
       if (it->use_count() == 0) {
-        LOG4CXX_ERROR(logger_, "Application not found ");
+        SDL_LOG_ERROR("Application not found");
         continue;
       }
 
@@ -1250,12 +1282,12 @@ class ApplicationManagerImpl
                                                     app_mngr)) {
         applications[app_count++] = hmi_application;
       } else {
-        LOG4CXX_DEBUG(logger_, "Can't CreateHMIApplicationStruct ");
+        SDL_LOG_DEBUG("Can't CreateHMIApplicationStruct");
       }
     }
 
     if (0 == app_count) {
-      LOG4CXX_WARN(logger_, "Empty applications list");
+      SDL_LOG_WARN("Empty applications list");
     }
   }
 
@@ -1316,6 +1348,39 @@ class ApplicationManagerImpl
    */
   void SendMobileMessage(smart_objects::SmartObjectSPtr message);
 
+  /**
+   * @brief Sets default value of the HELPPROMT global property
+   * to the first vrCommand of the Command Menu registered in application
+   *
+   * @param app Registered application
+   * @param is_timeout_promp Flag indicating that timeout prompt
+   * should be reset
+   *
+   * @return TRUE on success, otherwise FALSE
+   */
+  bool ResetHelpPromt(ApplicationSharedPtr app) const;
+
+  /**
+   * @brief  Sets default value of the TIMEOUTPROMT global property
+   * to the first vrCommand of the Command Menu registered in application
+   *
+   * @param app Registered application
+   *
+   * @return TRUE on success, otherwise FALSE
+   */
+  bool ResetTimeoutPromt(ApplicationSharedPtr app) const;
+
+  /**
+   * @brief Sets default value of the VRHELPTITLE global property
+   * to the application name and value of the VRHELPITEMS global property
+   * to value equal to registered command -1(default command “Help / Cancel”.)
+   *
+   * @param app Registered application
+   *
+   * @return TRUE on success, otherwise FALSE
+   */
+  bool ResetVrHelpTitleItems(ApplicationSharedPtr app) const;
+
  private:
   /*
    * NaviServiceStatusMap shows which navi service (audio/video) is opened
@@ -1338,6 +1403,16 @@ class ApplicationManagerImpl
    */
   std::string GetHashedAppID(uint32_t connection_key,
                              const std::string& policy_app_id) const;
+
+  /**
+   * @brief CreateAllAppGlobalPropsIDList creates an array of all application
+   * global properties IDs. Used as utility to call
+   * ApplicationManger::ResetGlobalProperties
+   * with all global properties.
+   * @return array smart object with global properties identifiers.
+   */
+  const smart_objects::SmartObjectSPtr CreateAllAppGlobalPropsIDList(
+      const uint32_t app_id) const;
 
   /**
    * @brief Removes suspended and stopped timers from timer pool
@@ -1510,6 +1585,8 @@ class ApplicationManagerImpl
    */
   std::set<uint32_t> subscribed_way_points_apps_list_;
 
+  smart_objects::SmartObjectSPtr way_points_data_;
+
   /**
    * @brief Map contains applications which
    * will send TTS global properties to HMI after timeout
@@ -1579,6 +1656,7 @@ class ApplicationManagerImpl
   NaviServiceStatusMap navi_service_status_;
   sync_primitives::Lock navi_service_status_lock_;
   std::deque<uint32_t> navi_app_to_stop_;
+  sync_primitives::Lock navi_app_to_stop_lock_;
   std::deque<uint32_t> navi_app_to_end_stream_;
   uint32_t navi_close_app_timeout_;
   uint32_t navi_end_stream_timeout_;

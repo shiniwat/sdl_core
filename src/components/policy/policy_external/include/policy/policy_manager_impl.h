@@ -435,19 +435,18 @@ class PolicyManagerImpl : public PolicyManager {
                      const std::string& wers_country_code,
                      const std::string& language) OVERRIDE;
 
-  /**
-   * @brief Runs necessary operations, which is depends on external system
-   * state, e.g. getting system-specific parameters which are need to be
-   * filled into policy table
-   */
-  void OnSystemReady() OVERRIDE;
+  void SetPreloadedPtFlag(const bool is_preloaded) OVERRIDE;
+
+  std::string GetCCPUVersionFromPT() const OVERRIDE;
 
   /**
    * @brief Get number of notification by priority
    * @param priority Specified priority
+   * @param is_subtle If true, get the number of allowed subtle notifications
    * @return notification number
    */
-  uint32_t GetNotificationsNumber(const std::string& priority) const OVERRIDE;
+  uint32_t GetNotificationsNumber(const std::string& priority,
+                                  const bool is_subtle) const OVERRIDE;
 
   /**
    * @brief Allows to update Vehicle Identification Number in policy table.
@@ -793,7 +792,7 @@ class PolicyManagerImpl : public PolicyManager {
    * @return Pair of policy application id and application url id from the
    * urls vector
    */
-  AppIdURL GetNextUpdateUrl(const EndpointUrls& urls) OVERRIDE;
+  DEPRECATED AppIdURL GetNextUpdateUrl(const EndpointUrls& urls) OVERRIDE;
 
   /**
    * @brief Checks if there is existing URL in the EndpointUrls vector with
